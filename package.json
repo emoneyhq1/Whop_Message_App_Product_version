@@ -1,0 +1,45 @@
+{ 
+  "name": "whop-demo-server",
+  "version": "1.0.0",
+  "description": "Whop Demo API Server - Node.js Backend",
+  "main": "src/server.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/server.ts",
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev:updater": "ts-node src/updater.ts",
+    "dev:build": "tsc && npm start",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@types/async": "^3.2.25",
+    "@types/mongoose": "^5.11.96",
+    "@whop-apps/sdk": "^0.0.1-canary.117",
+    "@whop/api": "^0.0.51",
+    "async": "^3.2.6",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mongoose": "^8.19.1",
+    "pm2": "^6.0.13"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.7.2",
+    "@whop-apps/dev-proxy": "^0.0.1-canary.117",
+    "nodemon": "^3.1.10",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "whop",
+    "api",
+    "backend",
+    "nodejs"
+  ],
+  "author": "Whop Demo",
+  "license": "MIT"
+}
