@@ -1,4 +1,4 @@
-{ 
+{
   "name": "whop-demo-server",
   "version": "1.0.0",
   "description": "Whop Demo API Server - Node.js Backend",
@@ -7,8 +7,8 @@
     "build": "tsc",
     "start": "ts-node --max-old-space-size=256 --expose-gc src/server.ts",
     "start:updater": "ts-node --max-old-space-size=256 --expose-gc src/updater.ts",
-    "dev": "nodemon --exec ts-node --max-old-space-size=256 --expose-gc src/server.ts",
-    "dev:updater": "ts-node --max-old-space-size=256 --expose-gc src/updater.ts",
+    "dev": "ts-node src/server.ts",
+    "dev:updater": "ts-node src/updater.ts",
     "clean": "rimraf dist"
   },
   "dependencies": {
