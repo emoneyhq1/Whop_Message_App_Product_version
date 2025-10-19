@@ -2,13 +2,41 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import config from './config';
 import WhopClient, { Product, Membership } from './whopClient';
-import connectToDatabase from './db';
+import connectToDatabase, { checkDatabaseHealth, getConnectionStatus } from './db';
 import ProductModel from './models/Product';
 import MembershipModel from './models/Membership';
 import cors from 'cors';
 
 const app = express();
 const whopClient = new WhopClient();
+
+// Memory monitoring
+const logMemoryUsage = () => {
+  const used = process.memoryUsage();
+  console.log(`[Memory] RSS: ${Math.round(used.rss / 1024 / 1024)}MB, Heap: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB`);
+};
+
+// Log memory usage every 30 seconds
+setInterval(logMemoryUsage, 30000);
+
+// Database health monitoring
+const checkDatabaseHealthPeriodically = async () => {
+  const isHealthy = await checkDatabaseHealth();
+  const status = getConnectionStatus();
+  console.log(`[Database] Health: ${isHealthy ? '✅ Healthy' : '❌ Unhealthy'}, Status: ${status}`);
+  
+  if (!isHealthy) {
+    console.log('[Database] Attempting to reconnect...');
+    try {
+      await connectToDatabase();
+    } catch (error) {
+      console.error('[Database] Reconnection failed:', error);
+    }
+  }
+};
+
+// Check database health every 60 seconds
+setInterval(checkDatabaseHealthPeriodically, 60000);
 
 // Middleware
 app.use(cors({ origin: '*' }));
@@ -19,43 +47,143 @@ app.use(express.urlencoded({ extended: true }));
 const frontendBuildPath = path.join(__dirname, '../dist');
 app.use(express.static(frontendBuildPath));
 
+// Health check endpoint
+app.get('/api/health', async (req: Request, res: Response) => {
+  try {
+    const dbHealthy = await checkDatabaseHealth();
+    const dbStatus = getConnectionStatus();
+    const memoryUsage = process.memoryUsage();
+    
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: {
+        healthy: dbHealthy,
+        status: dbStatus
+      },
+      memory: {
+        rss: Math.round(memoryUsage.rss / 1024 / 1024),
+        heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024)
+      },
+      uptime: process.uptime()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message
+    });
+  }
+});
+
 // API Routes
 app.get('/api/products', async (req: Request, res: Response) => {
   try {
-    const productsDocs = await ProductModel.find();
-    const membershipsDocs = await MembershipModel.find();
-    const activeByProduct: Record<string, number> = {};
-    membershipsDocs.forEach((m: any) => {
-      if (m.productId) {
-        activeByProduct[m.productId] = (activeByProduct[m.productId] || 0) + 1;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
+
+    // Check database connection first
+    if (!await checkDatabaseHealth()) {
+      return res.status(503).json({ error: 'Database unavailable' });
+    }
+
+    // Get products with pagination
+    const productsDocs = await ProductModel.find()
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Get active user counts efficiently using aggregation
+    const activeByProduct = await MembershipModel.aggregate([
+      { $group: { _id: "$productId", count: { $sum: 1 } } },
+      { $project: { productId: "$_id", count: 1, _id: 0 } }
+    ]);
+
+    const activeByProductMap: Record<string, number> = {};
+    activeByProduct.forEach(item => {
+      if (item.productId) {
+        activeByProductMap[item.productId] = item.count;
       }
     });
+
     const products = productsDocs.map((p: any) => ({
       id: p.productId,
       title: p.title,
       visibility: p.visibility,
-      activeUsers: p.activeUsers,
+      activeUsers: p.activeUsers || 0,
     }));
-    res.json({ products, activeByProduct });
+
+    // Get total count for pagination
+    const totalProducts = await ProductModel.countDocuments();
+
+    return res.json({ 
+      products, 
+      activeByProduct: activeByProductMap,
+      pagination: {
+        page,
+        limit,
+        total: totalProducts,
+        pages: Math.ceil(totalProducts / limit)
+      }
+    });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.message });
   }
 });
 
 app.get('/api/products/:productId', async (req: Request, res: Response) => {
   try {
     const { productId } = req.params;
-    const productDoc = await ProductModel.findOne({ productId });
-    const membershipsDocs = await MembershipModel.find({ productId });
-    const product = productDoc ? { id: productDoc.productId, title: productDoc.title, visibility: productDoc.visibility, activeUsers: productDoc.activeUsers } : null;
-    const memberships = membershipsDocs.map((m: any) => ({ id: m.membershipId, user: m.userId, email: m.email }));
-    res.json({ product, memberships });
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
+
+    // Check database connection first
+    if (!await checkDatabaseHealth()) {
+      return res.status(503).json({ error: 'Database unavailable' });
+    }
+
+    const productDoc = await ProductModel.findOne({ productId }).lean();
+    
+    // Get memberships with pagination
+    const membershipsDocs = await MembershipModel.find({ productId })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const product = productDoc ? { 
+      id: productDoc.productId, 
+      title: productDoc.title, 
+      visibility: productDoc.visibility, 
+      activeUsers: productDoc.activeUsers 
+    } : null;
+
+    const memberships = membershipsDocs.map((m: any) => ({ 
+      id: m.membershipId, 
+      user: m.userId, 
+      email: m.email 
+    }));
+
+    // Get total count for pagination
+    const totalMemberships = await MembershipModel.countDocuments({ productId });
+
+    return res.json({ 
+      product, 
+      memberships,
+      pagination: {
+        page,
+        limit,
+        total: totalMemberships,
+        pages: Math.ceil(totalMemberships / limit)
+      }
+    });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.message });
   }
 });
 
-// Send DM to all memberships of a product (JSON API)
+// Send DM to all memberships of a product (JSON API) - Process in batches
 app.post('/api/products/:productId/message', async (req: Request, res: Response) => {
   try {
     const { productId } = req.params;
@@ -65,41 +193,95 @@ app.post('/api/products/:productId/message', async (req: Request, res: Response)
       return res.status(400).json({ error: 'Message cannot be empty' });
     }
 
-    const membershipsDocs = await MembershipModel.find({ productId }).lean();
-    const productMemberships: Membership[] = membershipsDocs.map(m => ({
-      id: m.membershipId,
-      user: m.userId,
-      email: m.email,
-      product: m.productId,
-      status: 'completed',
-      valid: true,
-    })) as unknown as Membership[];
+    const BATCH_SIZE = 100; // Process 100 memberships at a time
+    let skip = 0;
+    let totalSuccessCount = 0;
+    let totalErrorCount = 0;
+    const allErrors: string[] = [];
 
-    let successCount = 0;
-    let errorCount = 0;
-    const errors: string[] = [];
+    // Get total count first
+    const totalMemberships = await MembershipModel.countDocuments({ productId });
+    
+    if (totalMemberships === 0) {
+      return res.json({ 
+        success: true, 
+        successCount: 0, 
+        errorCount: 0, 
+        errors: [],
+        message: 'No memberships found for this product'
+      });
+    }
 
-    for (let i = 0; i < productMemberships.length; i++) {
-      const membership = productMemberships[i];
-      const userId = membership.user;
-      const membershipId = membership.id;
+    console.log(`[Server] Starting to send messages to ${totalMemberships} memberships in batches of ${BATCH_SIZE}`);
 
-      if (!userId) {
-        errorCount++;
-        errors.push(`Membership ${membershipId}: No user ID`);
-        continue;
+    // Process memberships in batches to avoid memory issues
+    while (skip < totalMemberships) {
+      const membershipsDocs = await MembershipModel.find({ productId })
+        .skip(skip)
+        .limit(BATCH_SIZE)
+        .lean();
+
+      if (membershipsDocs.length === 0) break;
+
+      let batchSuccessCount = 0;
+      let batchErrorCount = 0;
+      const batchErrors: string[] = [];
+
+      // Process current batch
+      for (const membership of membershipsDocs) {
+        const userId = membership.userId;
+        const membershipId = membership.membershipId;
+
+        if (!userId) {
+          batchErrorCount++;
+          batchErrors.push(`Membership ${membershipId}: No user ID`);
+          continue;
+        }
+
+        try {
+          const result = await whopClient.sendDirectMessage(userId, message);
+          if (result.success) {
+            batchSuccessCount++;
+          } else {
+            batchErrorCount++;
+            batchErrors.push(`Membership ${membershipId}: ${result.error}`);
+          }
+        } catch (error: any) {
+          batchErrorCount++;
+          batchErrors.push(`Membership ${membershipId}: ${error.message}`);
+        }
       }
 
-      const result = await whopClient.sendDirectMessage(userId, message);
-      if (result.success) {
-        successCount++;
-      } else {
-        errorCount++;
-        errors.push(`Membership ${membershipId}: ${result.error}`);
+      totalSuccessCount += batchSuccessCount;
+      totalErrorCount += batchErrorCount;
+      allErrors.push(...batchErrors);
+
+      console.log(`[Server] Batch ${Math.floor(skip / BATCH_SIZE) + 1}: ${batchSuccessCount} success, ${batchErrorCount} errors`);
+
+      skip += BATCH_SIZE;
+
+      // Add small delay between batches to prevent rate limiting
+      if (skip < totalMemberships) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Force garbage collection every 5 batches
+      if (Math.floor(skip / BATCH_SIZE) % 5 === 0) {
+        if (global.gc) {
+          global.gc();
+        }
       }
     }
 
-    return res.json({ success: true, successCount, errorCount, errors });
+    console.log(`[Server] Message sending complete: ${totalSuccessCount} success, ${totalErrorCount} errors`);
+
+    return res.json({ 
+      success: true, 
+      successCount: totalSuccessCount, 
+      errorCount: totalErrorCount, 
+      errors: allErrors,
+      totalProcessed: totalSuccessCount + totalErrorCount
+    });
   } catch (e: any) {
     console.error('[Server] Error sending DMs (API):', e);
     return res.status(500).json({ error: e.message });

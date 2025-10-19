@@ -29,7 +29,14 @@ export interface Membership {
 }
 
 export async function startUpdater() {
-    await connectToDatabase();
+    try {
+        await connectToDatabase();
+        console.log('[Updater] Database connected successfully');
+    } catch (error: any) {
+        console.error('[Updater] Failed to connect to database:', error.message);
+        throw error;
+    }
+    
     const client = new WhopClient();
 
     const getProducts = async () => {

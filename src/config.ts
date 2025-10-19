@@ -13,6 +13,7 @@ export interface Config {
   baseUrl: string;
   membershipsUrl: string;
   messagesUrl: string;
+  mongodbUri: string;
 }
 
 const config: Config = {
@@ -26,6 +27,9 @@ const config: Config = {
   // Server Configuration
   port: parseInt(process.env.PORT || '8828', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
+  
+  // Database Configuration
+  mongodbUri: process.env.MONGODB_URI || '',
   
   // API URLs
   baseUrl: 'https://api.whop.com',
