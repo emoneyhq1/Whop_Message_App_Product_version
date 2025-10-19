@@ -5,10 +5,10 @@
   "main": "src/server.ts",
   "scripts": {
     "build": "tsc",
-    "start": "ts-node src/server.ts",
-    "dev": "nodemon --exec ts-node src/server.ts",
-    "dev:updater": "ts-node src/updater.ts",
-    "dev:build": "tsc && npm start",
+    "start": "ts-node --max-old-space-size=256 --expose-gc src/server.ts",
+    "start:updater": "ts-node --max-old-space-size=256 --expose-gc src/updater.ts",
+    "dev": "nodemon --exec ts-node --max-old-space-size=256 --expose-gc src/server.ts",
+    "dev:updater": "ts-node --max-old-space-size=256 --expose-gc src/updater.ts",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -21,8 +21,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "mongoose": "^8.19.1",
-    "pm2": "^6.0.13"
+    "mongoose": "^8.19.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

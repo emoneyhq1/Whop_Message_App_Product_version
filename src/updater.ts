@@ -7,7 +7,7 @@ import ProductModel from './models/Product';
 import MembershipModel from './models/Membership';
 import SyncStateModel from './models/SyncState';
 
-const INTERVAL_MS = parseInt(process.env.UPDATE_INTERVAL_MS || '60000', 10); // default 60s
+const INTERVAL_MS = parseInt(process.env.UPDATE_INTERVAL_MS || '600000', 10); // default 10 minutes for production
 
 export interface Product {
     id: string;
@@ -204,8 +204,17 @@ export async function startUpdater() {
 
     // initial run
     await run();
-    // periodic
-    setInterval(run, INTERVAL_MS);
+    
+    // Only run periodic updates if explicitly enabled in production
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Updater] Starting periodic updates every ${INTERVAL_MS / 1000} seconds (development mode)`);
+      setInterval(run, INTERVAL_MS);
+    } else if (process.env.ENABLE_UPDATER === 'true') {
+      console.log(`[Updater] Starting periodic updates every ${INTERVAL_MS / 1000} seconds (production mode)`);
+      setInterval(run, INTERVAL_MS);
+    } else {
+      console.log('[Updater] Periodic updates disabled in production. Set ENABLE_UPDATER=true to enable.');
+    }
 }
 
 // If executed directly

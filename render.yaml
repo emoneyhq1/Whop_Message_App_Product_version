@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: whop-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: WHOP_APP_ID
+        sync: false
+      - key: WHOP_AGENT_USER_ID
+        sync: false
+      - key: WHOP_COMPANY_ID
+        sync: false
+      - key: WHOP_API_KEY
+        sync: false
+      - key: V2_PRODUCTS_TOKEN
+        sync: false
+      - key: ENABLE_UPDATER
+        value: "false"
+      - key: UPDATE_INTERVAL_MS
+        value: "600000"
+    healthCheckPath: /api/health
+    plan: starter

@@ -10,14 +10,35 @@ import cors from 'cors';
 const app = express();
 const whopClient = new WhopClient();
 
-// Memory monitoring
+// Memory monitoring and management
 const logMemoryUsage = () => {
   const used = process.memoryUsage();
-  console.log(`[Memory] RSS: ${Math.round(used.rss / 1024 / 1024)}MB, Heap: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB`);
+  const rssMB = Math.round(used.rss / 1024 / 1024);
+  const heapUsedMB = Math.round(used.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(used.heapTotal / 1024 / 1024);
+  
+  console.log(`[Memory] RSS: ${rssMB}MB, Heap: ${heapUsedMB}MB / ${heapTotalMB}MB`);
+  
+  // Force garbage collection if memory usage is high (lower threshold for Render)
+  if (heapUsedMB > 150 && global.gc) {
+    console.log('[Memory] High memory usage detected, forcing garbage collection...');
+    global.gc();
+  }
 };
 
-// Log memory usage every 30 seconds
-setInterval(logMemoryUsage, 30000);
+// Log memory usage every 2 minutes (less frequent for production)
+setInterval(logMemoryUsage, 120000);
+
+// Conservative memory management for production
+if (process.env.NODE_ENV === 'production') {
+  // Force garbage collection every 5 minutes in production
+  setInterval(() => {
+    if (global.gc) {
+      global.gc();
+      console.log('[Memory] Forced garbage collection');
+    }
+  }, 300000);
+}
 
 // Database health monitoring
 const checkDatabaseHealthPeriodically = async () => {
@@ -92,10 +113,12 @@ app.get('/api/products', async (req: Request, res: Response) => {
     const productsDocs = await ProductModel.find()
       .skip(skip)
       .limit(limit)
-      .lean();
+      .lean()
+      .maxTimeMS(10000); // 10 second timeout
 
     // Get active user counts efficiently using aggregation
     const activeByProduct = await MembershipModel.aggregate([
+      { $match: { productId: { $exists: true, $ne: null } } }, // Only count valid productIds
       { $group: { _id: "$productId", count: { $sum: 1 } } },
       { $project: { productId: "$_id", count: 1, _id: 0 } }
     ]);
@@ -115,7 +138,7 @@ app.get('/api/products', async (req: Request, res: Response) => {
     }));
 
     // Get total count for pagination
-    const totalProducts = await ProductModel.countDocuments();
+    const totalProducts = await ProductModel.countDocuments().maxTimeMS(5000); // 5 second timeout
 
     return res.json({ 
       products, 
@@ -144,13 +167,14 @@ app.get('/api/products/:productId', async (req: Request, res: Response) => {
       return res.status(503).json({ error: 'Database unavailable' });
     }
 
-    const productDoc = await ProductModel.findOne({ productId }).lean();
+    const productDoc = await ProductModel.findOne({ productId }).lean().maxTimeMS(5000);
     
     // Get memberships with pagination
     const membershipsDocs = await MembershipModel.find({ productId })
       .skip(skip)
       .limit(limit)
-      .lean();
+      .lean()
+      .maxTimeMS(10000);
 
     const product = productDoc ? { 
       id: productDoc.productId, 
@@ -166,7 +190,7 @@ app.get('/api/products/:productId', async (req: Request, res: Response) => {
     }));
 
     // Get total count for pagination
-    const totalMemberships = await MembershipModel.countDocuments({ productId });
+    const totalMemberships = await MembershipModel.countDocuments({ productId }).maxTimeMS(5000);
 
     return res.json({ 
       product, 
@@ -200,7 +224,7 @@ app.post('/api/products/:productId/message', async (req: Request, res: Response)
     const allErrors: string[] = [];
 
     // Get total count first
-    const totalMemberships = await MembershipModel.countDocuments({ productId });
+    const totalMemberships = await MembershipModel.countDocuments({ productId }).maxTimeMS(5000);
     
     if (totalMemberships === 0) {
       return res.json({ 
@@ -219,7 +243,8 @@ app.post('/api/products/:productId/message', async (req: Request, res: Response)
       const membershipsDocs = await MembershipModel.find({ productId })
         .skip(skip)
         .limit(BATCH_SIZE)
-        .lean();
+        .lean()
+        .maxTimeMS(10000);
 
       if (membershipsDocs.length === 0) break;
 
@@ -300,15 +325,18 @@ app.get('*', (req: Request, res: Response) => {
 });
 
 // Start server
-const PORT = config.port;
-app.listen(PORT, async () => {
+const PORT = parseInt(process.env.PORT || config.port.toString(), 10);
+const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+
+app.listen(PORT, HOST, async () => {
   try {
     await connectToDatabase();
     console.log('✅ Connected to MongoDB');
   } catch (err) {
     console.error('❌ MongoDB connection failed:', err);
   }
-  console.log(`🚀 Whop API Server running on http://localhost:${PORT}`);
-  console.log(`📊 API Products: http://localhost:${PORT}/api/products`);
+  console.log(`🚀 Whop API Server running on http://${HOST}:${PORT}`);
+  console.log(`📊 API Products: http://${HOST}:${PORT}/api/products`);
   console.log(`🔧 Environment: ${config.nodeEnv}`);
+  console.log(`🌐 Host: ${HOST}, Port: ${PORT}`);
 });
