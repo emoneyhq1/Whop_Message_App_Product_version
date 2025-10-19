@@ -7,7 +7,7 @@ export async function connectToDatabase(uri?: string): Promise<typeof mongoose> 
     return mongoose;
   }
 
-  const mongoUri = uri || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/whop';
+  const mongoUri = uri || process.env.MONGODB_URI || 'mongodb+srv://ronelmendozawork01_db_user:ZalTMjRzlYjUh9ar@cluster0.bqwun9m.mongodb.net/';
 
   mongoose.set('strictQuery', true);
 

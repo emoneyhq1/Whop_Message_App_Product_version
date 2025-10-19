@@ -119,7 +119,7 @@ app.get('*', (req: Request, res: Response) => {
 
 // Start server
 const PORT = config.port;
-app.listen(8828, async () => {
+app.listen(PORT, async () => {
   try {
     await connectToDatabase();
     console.log('✅ Connected to MongoDB');

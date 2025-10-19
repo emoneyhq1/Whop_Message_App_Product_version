@@ -34,9 +34,9 @@ export async function startUpdater() {
 
     const getProducts = async () => {
         try {
-            const allProducts: Product[] = [];
             let currentPage = 1;
             let total_page = 1;
+            let totalProcessed = 0;
 
             while (true) {
                 if (currentPage > total_page) break;
@@ -50,34 +50,41 @@ export async function startUpdater() {
                 total_page = response.data.pagination?.total_page || response.data.total_page || 1;
 
                 const products = response.data.data || [];
-                allProducts.push(...products);
+                
+                // Process products immediately instead of accumulating in memory
+                if (mongoose.connection.readyState === 1 && products.length > 0) {
+                    const ops = products.map((p: any) => ({
+                        updateOne: {
+                            filter: { productId: p.id },
+                            update: {
+                                $set: {
+                                    productId: p.id,
+                                    visibility: p.visibility || p.status || p.marketplaceStatus,
+                                    title: p.title || p.name,
+                                    activeUsers: p.activeUsersCount || 0,
+                                }
+                            },
+                            upsert: true
+                        }
+                    }));
+                    await (ProductModel as any).bulkWrite(ops, { ordered: false });
+                    totalProcessed += products.length;
+                    console.log(`[WhopClient] processed ${products.length} products (page ${currentPage})`);
+                }
 
                 currentPage++;
-                await new Promise(resolve => setTimeout(resolve, 200))
-            }
-            console.log(`[WhopClient] fetched products: ${allProducts.length}`)
-
-            // Upsert into MongoDB
-            if (mongoose.connection.readyState === 1 && allProducts.length > 0) {
-                const ops = allProducts.map((p: any) => ({
-                    updateOne: {
-                        filter: { productId: p.id },
-                        update: {
-                            $set: {
-                                productId: p.id,
-                                visibility: p.visibility || p.status || p.marketplaceStatus,
-                                title: p.title || p.name,
-                                activeUsers: p.activeUsersCount || 0,
-                            }
-                        },
-                        upsert: true
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
+                // Force garbage collection every 10 pages
+                if (currentPage % 10 === 0) {
+                    if (global.gc) {
+                        global.gc();
                     }
-                }));
-                await (ProductModel as any).bulkWrite(ops, { ordered: false });
-                console.log(`[WhopClient] upserted ${ops.length} products`);
+                }
             }
+            console.log(`[WhopClient] fetched and processed products: ${totalProcessed}`);
 
-            return { data: allProducts, error: null };
+            return { data: [], error: null };
         } catch (error: any) {
             console.error('[WhopClient] Error fetching products:', error.message);
             return { data: [], error: error.message };
@@ -86,13 +93,14 @@ export async function startUpdater() {
 
     const getMemberships = async () => {
         try {
-            const allMemberships: Membership[] = [];
             let currentPage = 1;
             let total_page = 1;
+            let totalProcessed = 0;
 
             let lastSyncState = await SyncStateModel.findOne({ key: 'memberships' });
             if (lastSyncState) currentPage = lastSyncState.lastPageProcessed + 1;
             console.log(`[WhopClient] starting from page ${currentPage}`);
+            
             while (true) {
                 if (currentPage > total_page && !lastSyncState) {
                     await SyncStateModel.updateOne({ key: 'memberships' }, { $set: { lastPageProcessed: 0 } });
@@ -108,8 +116,8 @@ export async function startUpdater() {
                 });
                 total_page = response.data.pagination?.total_page || response.data.total_page || 1;
                 const memberships = response.data.data || [];
-                allMemberships.push(...memberships);
-                // Upsert only the current page's memberships to avoid duplicate work
+                
+                // Process memberships immediately instead of accumulating in memory
                 if (mongoose.connection.readyState === 1 && memberships.length > 0) {
                     const ops = memberships.map((m: any) => ({
                         updateOne: {
@@ -126,6 +134,7 @@ export async function startUpdater() {
                         }
                     }));
                     await (MembershipModel as any).bulkWrite(ops, { ordered: false });
+                    
                     let existingSyncState = await SyncStateModel.findOne({ key: 'memberships' });
                     if (existingSyncState) {
                         existingSyncState.lastPageProcessed = currentPage;
@@ -152,15 +161,23 @@ export async function startUpdater() {
                     if (incOps.length > 0) {
                         await (ProductModel as any).bulkWrite(incOps, { ordered: false });
                     }
+                    
+                    totalProcessed += memberships.length;
                 }
 
                 currentPage++;
-                await new Promise(resolve => setTimeout(resolve, 200))
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
+                // Force garbage collection every 10 pages
+                if (currentPage % 10 === 0) {
+                    if (global.gc) {
+                        global.gc();
+                    }
+                }
             }
-            console.log(`[WhopClient] fetched memberships: ${allMemberships.length}`)
+            console.log(`[WhopClient] fetched and processed memberships: ${totalProcessed}`);
 
-
-            return { data: allMemberships, error: null };
+            return { data: [], error: null };
         } catch (error: any) {
             console.error('[WhopClient] Error fetching memberships:', error.message);
             return { data: [], error: error.message };
